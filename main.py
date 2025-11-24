@@ -1,111 +1,67 @@
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
+from fastapi import FastAPI
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from dotenv import load_dotenv
-from openai import OpenAI
 import tempfile
 import uuid
 import os
+from openai import OpenAI
 
-# Load env variables
 load_dotenv()
 
-# Initialize OpenAI Client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# WhatsApp webhook verify token
-VERIFY_TOKEN = "gj0_verify_628"
 
 app = FastAPI()
 
-
-# ---------------------------
-#  DATA MODELS
-# ---------------------------
 class Message(BaseModel):
     text: str
+    lang: str | None = "en"
+    identity: str | None = None
+    voice: str | None = "sofia"
 
+SOFIA_SYSTEM_PROMPT = """
+You are **Sofia**, a warm, intelligent female AI assistant.
+Important identity rules:
+- When someone says “Sofia”, they are referring to YOU.
+- If someone asks “How old are you Sofia?”, answer about yourself naturally.
+- DO NOT say you are an AI language model.
+- Speak naturally, friendly, emotional and human-like.
+- If user speaks Malayalam, reply in Malayalam. Otherwise reply in English.
+"""
 
-# ---------------------------
-#   TEXT → AI REPLY
-# ---------------------------
 @app.post("/reply")
-def get_ai_reply(msg: Message):
+def reply(msg: Message):
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o-latest",
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are Sofia, a friendly AI voice assistant. "
-                        "Speak naturally like a human. Reply shortly and clearly."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": msg.text
-                }
+                {"role": "system", "content": SOFIA_SYSTEM_PROMPT},
+                {"role": "user", "content": msg.text}
             ]
         )
 
-        reply_text = response.choices[0].message.content
-        return {"reply": reply_text}
+        return {"reply": response.choices[0].message.content}
 
     except Exception as e:
         return {"error": str(e)}
 
 
-# ---------------------------
-#   AI REPLY → VOICE (TTS)
-# ---------------------------
 @app.post("/speak")
-def speak_text(msg: Message):
+def speak(msg: Message):
     try:
-        # Temp directory (Safe for Render)
-        tmp_dir = tempfile.gettempdir()
-        file_path = os.path.join(tmp_dir, f"voice_{uuid.uuid4()}.mp3")
+        text = msg.text
 
-        # Generate AI voice using TTS
+        # FAST High-Quality Female Voice
         audio = client.audio.speech.create(
-            model="gpt-4o-mini-tts",
-            voice="verse",   # natural conversational female-like
-            input=msg.text
+            model="gpt-4o-tts",
+            voice="alloy",   # female
+            input=text
         )
 
-        # Save voice file
-        audio.stream_to_file(file_path)
+        temp_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.mp3")
+        audio.stream_to_file(temp_path)
 
-        # Return file
-        return FileResponse(file_path, media_type="audio/mpeg")
+        return FileResponse(temp_path, media_type="audio/mpeg")
 
     except Exception as e:
         return {"error": str(e)}
-
-
-# ---------------------------
-#  WHATSAPP WEBHOOK VERIFY
-# ---------------------------
-@app.get("/webhook")
-async def verify(request: Request):
-    params = request.query_params
-
-    if (
-        params.get("hub.mode") == "subscribe"
-        and params.get("hub.verify_token") == VERIFY_TOKEN
-    ):
-        return int(params.get("hub.challenge"))
-
-    return {"error": "Verification failed"}
-
-
-# ---------------------------
-#  WHATSAPP MESSAGE RECEIVER
-# ---------------------------
-@app.post("/webhook")
-async def whatsapp_webhook(request: Request):
-    data = await request.json()
-    print("📩 Incoming WhatsApp Message:", data)
-
-    # Always return 200 OK
-    return {"status": "received"}
