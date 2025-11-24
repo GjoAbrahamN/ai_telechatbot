@@ -54,7 +54,7 @@ def speak(msg: Message):
         # FAST High-Quality Female Voice
         audio = client.audio.speech.create(
             model="gpt-4o-tts",
-            voice="alloy",   # female
+            voice="emma",   # female
             input=text
         )
 
